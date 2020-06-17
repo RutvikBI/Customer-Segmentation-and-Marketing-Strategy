@@ -1,0 +1,358 @@
+---
+title: "Data Quality Assessment"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r include=FALSE}
+library(dplyr)
+library (ggplot2)
+library(eeptools) #dob to age calculation
+library(tidyr)
+library(lubridate)
+library(rfm)
+library(xgboost)
+library(caret)
+library(Matrix)
+library(randomForest)
+transactions <- read.csv("Transactions.csv", header=TRUE,na.strings=c(""," ","NA"))
+newCustList <- read.csv("NewCustomerList.csv", header=TRUE)
+custDemo <- read.csv("CustomerDemographic.csv", header=TRUE)
+custAdd <- read.csv("CustomerAddress.csv", header=TRUE)
+```
+
+```{r}
+transactions[!complete.cases(transactions),]
+```
+```{r}
+transactions_orig <- transactions
+transactions <- na.omit(transactions)
+```
+
+```{r}
+glimpse(transactions)
+```
+```{r}
+transactions$standard_cost <- as.numeric(unlist(regmatches(transactions$standard_cost,gregexpr("[[:digit:]]+\\.[[:digit:]]\\s*",transactions$standard_cost))))
+```
+
+```{r}
+transactions$order_status <- as.factor(transactions$order_status)
+transactions$brand <- as.factor(transactions$brand)
+transactions$product_line <- as.factor(transactions$product_line)
+transactions$product_class <- as.factor(transactions$product_class)
+transactions$product_size <- as.factor(transactions$product_size)
+transactions$product_first_sold_date <- as.Date(transactions$product_first_sold_date, format = "%m/%d/%Y")
+transactions$transaction_date <- as.Date(transactions$transaction_date, format = "%m/%d/%Y")
+```
+
+```{r}
+str(transactions, give.attr = FALSE)
+```
+```{r}
+glimpse(transactions)
+```
+
+```{r}
+print(length(unique(transactions$customer_id)))
+```
+
+```{r}
+print(length(unique(custAdd$customer_id)))
+```
+```{r}
+print(length(unique(custDemo$customer_id)))
+```
+
+```{r}
+length(transactions$customer_id[!(transactions$customer_id %in% custDemo$customer_id)])
+```
+
+```{r}
+str(custAdd, give.attr = FALSE)
+```
+```{r}
+custAdd$state[custAdd$state == 'New South Wales'] <- 'NSW'
+custAdd$state[custAdd$state == 'Victoria'] <- 'VIC'
+custAdd$postcode <- as.factor(custAdd$postcode)
+custAdd$state <- as.factor(custAdd$state)
+custAdd$country <- as.factor(custAdd$country)
+custAdd$property_valuation <- as.factor(custAdd$property_valuation)
+```
+
+```{r}
+str(custAdd, give.attr = FALSE)
+```
+```{r}
+custDemo[is.na(custDemo)] <- 'U'
+```
+
+```{r}
+glimpse(custDemo)
+```
+
+```{r}
+custDemo$gender[custDemo$gender == 'F'] <- 'Female'
+custDemo$gender[custDemo$gender == 'Femal'] <- 'Female'
+custDemo$gender[custDemo$gender == 'M'] <- 'Male'
+```
+
+```{r}
+custDemo$gender <- as.factor(custDemo$gender)
+custDemo$job_title <- as.factor(custDemo$job_title)
+custDemo$job_industry_category <- as.factor(custDemo$job_industry_category)
+custDemo$wealth_segment <- as.factor(custDemo$wealth_segment)
+custDemo$deceased_indicator <- as.factor(custDemo$deceased_indicator)
+custDemo$owns_car <- as.factor(custDemo$owns_car)
+custDemo <- custDemo[custDemo$customer_id != "U", ]
+custDemo$DOB[custDemo$DOB == ''] <- '2018-01-01'
+
+#custDemo$DOB<- as.Date(custDemo$DOB, format="%Y-%m-%d")
+custDemo$age <- age_calc(as.Date(custDemo$DOB, format="%Y-%m-%d"), units = "years")
+
+
+```
+
+```{r}
+labs <- c(paste(seq(0, 95, by = 10), seq(0 + 10 - 1, 100 - 1, by = 10),
+                sep = "-"), paste(100, "+", sep = ""))
+custDemo$age <- cut(custDemo$age, breaks = c(seq(0, 100, by = 10), Inf), labels = labs, right = FALSE)
+```
+
+```{r}
+str(custDemo, give.attr = FALSE)
+```
+
+```{r}
+ggplot(data = custDemo) +
+  geom_bar(mapping = aes(x = age))
+```
+
+```{r}
+ggplot(data = custDemo) +
+  geom_bar(mapping = aes(x = wealth_segment))
+```
+
+```{r}
+ggplot(data = custDemo) +
+  geom_bar(mapping = aes(x = owns_car))
+```
+
+```{r}
+ggplot(data = custDemo) +
+  geom_bar(mapping = aes(x = gender))
+```
+
+```{r}
+ggplot(data = custAdd) +
+  geom_bar(mapping = aes(x = state))
+```
+
+```{r}
+ggplot(data = transactions) +
+  geom_bar(mapping = aes(x = brand))
+```
+
+```{r}
+ggplot(data = transactions) +
+  geom_bar(mapping = aes(x = product_line))
+```
+
+```{r}
+ggplot(data = transactions) +
+  geom_bar(mapping = aes(x = online_order))
+```
+
+```{r}
+summary(custDemo)
+```
+
+```{r}
+summary(transactions)
+```
+
+```{r}
+# Outer join
+custFinal <- merge(x = custDemo, y = custAdd, by = "customer_id", all = TRUE)
+```
+
+
+
+
+```{r}
+ggplot(custFinal, aes(fill=owns_car, y=owns_car, x=state)) + 
+    geom_bar(position="stack", stat="identity")
+```
+
+```{r}
+transactions$profit <- transactions$list_price - transactions$standard_cost
+```
+
+```{r}
+analysis_date <- lubridate::as_date("2017-12-31", tz = "UTC")
+rfm_result <- rfm_table_order(transactions, customer_id, transaction_date, list_price, analysis_date)
+rfm_result
+```
+
+```{r}
+#Customer Segmentation
+rfm_result_df <- as.data.frame(rfm_result$rfm)
+rfm_result_df$segmentRFM<-NA
+champions <- c(444,445,454,455,544,545,554,555)
+potential_loyalist <- c(324,325,343,344,345,353,354,355,433,434,435,453,533,534,535)
+recent_customers <- c(411,412,413,414,415,424,425,511,512,513,514,515,524,525)
+promising <- c(311,312,313,331,332,341,342,351,352,421,422,423,431,432,441,442,443,451,452,521,522,523,531,532,541,542,543,551,552,553)
+needing_attention <- c(141,142,143,241,242,243,333,334,335)
+about_to_sleep <- c(131,132,133,151,152,153,214,215,221,222,223,231,232,233,251,252,253)
+at_risk <- c(124,125,134,135,144,145,154,155,224,225,234,235,244,245,254,255,323)
+hibernating <- c(111,112,113,114,115,121,122,123,211,212,213,314,315,321,322)
+rfm_result_df$segmentRFM[which(rfm_result_df$rfm_score %in% champions)] = "Champion"
+rfm_result_df$segmentRFM[which(rfm_result_df$rfm_score %in% potential_loyalist)] = "PotentialLoyalist"
+rfm_result_df$segmentRFM[which(rfm_result_df$rfm_score %in% recent_customers)] = "NewCustomers"
+rfm_result_df$segmentRFM[which(rfm_result_df$rfm_score %in% promising)] = "Promising"
+rfm_result_df$segmentRFM[which(rfm_result_df$rfm_score %in% needing_attention)] = "NeedsAttention"
+rfm_result_df$segmentRFM[which(rfm_result_df$rfm_score %in% about_to_sleep)] = "AboutToSleep"
+rfm_result_df$segmentRFM[which(rfm_result_df$rfm_score %in% at_risk)] = "AtRisk"
+rfm_result_df$segmentRFM[which(rfm_result_df$rfm_score %in% hibernating)] = "Hibernating"
+rfm_result_df
+```
+
+```{r}
+rfm_result_df$action <- "Loyal"
+rfm_result_df$action[rfm_result_df$rfm_score < 444 & rfm_result_df$rfm_score >= 111] <- "PromotionsRequired"
+#rfm_result_df$action[rfm_result_df$rfm_score < 222] <- "Sleeping"
+
+```
+
+```{r}
+rfm_result_df$segmentRFM <- as.factor(rfm_result_df$segmentRFM)
+rfm_result_df$action <- as.factor(rfm_result_df$action)
+```
+
+```{r}
+ggplot(data = rfm_result_df) +
+  geom_bar(mapping = aes(x = segmentRFM))
+```
+```{r}
+ggplot(data = rfm_result_df) +
+  geom_bar(mapping = aes(x = action))
+```
+
+```{r}
+# Outer join
+custFinal <- merge(x = custFinal, y = rfm_result_df, by = "customer_id", all = TRUE)
+```
+
+```{r}
+custFinal$segmentRFM <- as.factor(custFinal$segmentRFM)
+custFinal$rfm_score <- as.factor(custFinal$rfm_score)
+custFinal <- na.omit(custFinal)
+glimpse(custFinal)
+```
+```{r}
+custFinal$past_3_years_bike_related_purchases <- as.numeric(custFinal$past_3_years_bike_related_purchases)
+custFinal$tenure <- as.numeric(custFinal$tenure)
+glimpse(custFinal)
+```
+
+```{r}
+ggplot(custFinal, aes(fill=action, y=action, x=owns_car,state)) + 
+    geom_bar(position="stack", stat="identity")
+```
+
+```{r}
+ggplot(custFinal, aes(fill=action, y=action, x=wealth_segment)) + 
+    geom_bar(position="stack", stat="identity")
+```
+
+```{r}
+ggplot(custFinal, aes(fill=action, y=action, x=job_industry_category)) + 
+    geom_bar(position="stack", stat="identity")
+```
+
+
+
+```{r}
+ggplot(custFinal, aes(fill=action, y=action, x=age)) + 
+    geom_bar(position="stack", stat="identity")
+```
+
+
+
+```{r}
+ggplot(custFinal, aes(fill=action, y=action, x=gender)) + 
+    geom_bar(position="stack", stat="identity")
+```
+
+```{r}
+ggplot(custFinal, aes(fill=action, y=action, x=state)) + 
+    geom_bar(position="stack", stat="identity")
+```
+
+```{r}
+custFinal_split <- split(custFinal, custFinal$action)
+custFinal_split
+```
+
+```{r}
+# Now we can create the different dataframes
+cust_Loyal <- custFinal_split$Loyal
+cust_Promotions <- custFinal_split$PromotionsRequired
+#cust_Sleeping <- custFinal_split$Sleeping
+```
+
+```{r}
+summary(cust_Loyal)
+```
+```{r}
+summary(cust_Promotions)
+```
+
+```{r}
+summary(newCustList)
+```
+```{r}
+str(newCustList)
+```
+
+```{r}
+ggplot(data = newCustList) +
+  geom_bar(mapping = aes(x = gender))
+```
+
+
+```{r}
+ggplot(data = newCustList) +
+  geom_bar(mapping = aes(x = owns_car))
+```
+
+```{r}
+ggplot(data = newCustList) +
+  geom_bar(mapping = aes(x = state))
+```
+
+```{r}
+ggplot(data = newCustList) +
+  geom_bar(mapping = aes(x = job_industry_category))
+```
+
+```{r}
+ggplot(data = newCustList) +
+  geom_bar(mapping = aes(x = wealth_segment))
+```
+
+```{r}
+write.csv(custFinal,"KPMG.csv", row.names = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
