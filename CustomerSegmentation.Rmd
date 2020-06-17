@@ -1,9 +1,5 @@
 ---
-title: "Data Quality Assessment"
-output:
-  html_document: default
-  word_document: default
-  pdf_document: default
+title: "Customer Segmentation"
 ---
 
 ```{r include=FALSE}
@@ -344,7 +340,7 @@ ggplot(data = newCustList) +
 ```
 
 ```{r}
-write.csv(custFinal,"KPMG.csv", row.names = FALSE)
+write.csv(custFinal,"CustomerSegments.csv", row.names = FALSE)
 ```
 
 
